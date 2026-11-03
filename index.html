@@ -16,6 +16,12 @@
   .editor .hl{position:absolute;inset:0;color:transparent;pointer-events:none}
   .hl mark{background:rgba(250,204,21,.28);color:transparent;border-radius:3px}
   textarea{position:relative;display:block;width:100%;min-height:200px;background:transparent;color:var(--text);border:0;border-radius:10px;resize:vertical}
+  .menu{position:relative}
+  .menu summary{list-style:none;cursor:pointer;border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:13px}
+  .menu summary::-webkit-details-marker{display:none}
+  .menu>div{position:absolute;right:0;top:calc(100% + 4px);z-index:6;display:flex;flex-direction:column;gap:4px;min-width:180px;padding:6px;background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.4)}
+  .menu>div button{text-align:left}
+  select{background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px;font-size:13px;max-width:220px}
   input[type=number]{width:64px;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 6px}
   button{background:var(--line);color:var(--text);border:0;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:14px}
   button:hover{filter:brightness(1.25)}
@@ -75,9 +81,17 @@
   <div class="toolbar">
     <h2>Rutina</h2>
     <div class="group">
-      <button class="ghost" data-act="import">Importar .txt</button>
-      <button class="ghost" data-act="export">Exportar .txt</button>
-      <button class="ghost" data-act="share">🔗 Compartir enlace</button>
+      <select id="saved" aria-label="Rutinas guardadas"></select>
+      <button class="ghost" data-act="save">💾 Guardar</button>
+      <button class="ghost" data-act="remove">🗑 Borrar</button>
+      <details class="menu">
+        <summary>⋯ Más</summary>
+        <div>
+          <button class="ghost" data-act="import">Importar .txt</button>
+          <button class="ghost" data-act="export">Exportar .txt</button>
+          <button class="ghost" data-act="share">🔗 Compartir enlace</button>
+        </div>
+      </details>
       <input type="file" id="file" accept=".txt,text/plain" hidden>
     </div>
   </div>
@@ -587,7 +601,56 @@ function shareUrl() {
   return `${location.href.split('#')[0]}#${params}`;
 }
 
+/* ---------- Rutinas guardadas (localStorage) ---------- */
+
+const STORE = 'rutinas'; // { nombre: { r: texto, d: descanso entre vueltas } }
+const $saved = document.getElementById('saved');
+let removeArmed = null; // borrar pide un segundo clic (sin confirm(), que el navegador puede bloquear)
+function loadSaved() {
+  try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch (_) { return {}; }
+}
+function storeSaved(all) {
+  try { localStorage.setItem(STORE, JSON.stringify(all)); return true; } catch (_) { return false; }
+}
+function renderSaved(selected = $saved.value) {
+  const names = Object.keys(loadSaved()).sort((a, b) => a.localeCompare(b));
+  $saved.replaceChildren(new Option('— Rutinas guardadas —', ''), ...names.map(n => new Option(n, n)));
+  $saved.value = names.includes(selected) ? selected : '';
+}
+$saved.addEventListener('change', () => {
+  const rt = loadSaved()[$saved.value];
+  if (!rt) return;
+  $input.value = rt.r;
+  $roundRest.value = rt.d || 0;
+  generate();
+});
+
 const actions = {
+  save: () => {
+    const name = prompt('Nombre de la rutina', $saved.value)?.trim();
+    if (!name) return;
+    const all = loadSaved();
+    const existed = name in all;
+    all[name] = { r: $input.value, d: roundRest() };
+    if (!storeSaved(all)) return setStatus('No se ha podido guardar (almacenamiento del navegador no disponible).');
+    renderSaved(name);
+    setStatus(`💾 Rutina «${name}» ${existed ? 'actualizada' : 'guardada'}.`);
+  },
+  remove: () => {
+    const name = $saved.value;
+    if (!name) return setStatus('Elige primero una rutina guardada.');
+    if (removeArmed !== name) {
+      removeArmed = name;
+      setTimeout(() => { removeArmed = null; }, 4000);
+      return setStatus(`Pulsa 🗑 Borrar otra vez para eliminar «${name}».`);
+    }
+    removeArmed = null;
+    const all = loadSaved();
+    delete all[name];
+    storeSaved(all);
+    renderSaved('');
+    setStatus(`Rutina «${name}» borrada.`);
+  },
   prev: () => goTo(seqIndex - 1),
   next: () => goTo(seqIndex + 1),
   pause: () => {
@@ -624,6 +687,10 @@ const actions = {
 
 document.addEventListener('click', e => {
   const act = e.target.closest('[data-act]')?.dataset.act;
+  // El menú se cierra al elegir una opción o al pulsar fuera de él
+  document.querySelectorAll('details.menu[open]').forEach(d => {
+    if (act || !d.contains(e.target)) d.open = false;
+  });
   if (!act) return;
   unlockAudio();
   actions[act]();
@@ -653,6 +720,7 @@ if (shared.has('r')) {
   $roundRest.value = shared.get('d') || 0;
 }
 
+renderSaved('');
 generate();
 </script>
 </body>
