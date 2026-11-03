@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Generador de cronómetros</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#0f1115">
 <style>
   :root{--bg:#0f1115;--card:#181b22;--line:#2a2f3a;--text:#e8eaf0;--muted:#8a90a0;--accent:#4ade80;--warn:#facc15;}
   *{box-sizing:border-box}
@@ -25,6 +28,7 @@
   input[type=number]{width:64px;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 6px}
   button{background:var(--line);color:var(--text);border:0;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:14px}
   button:hover{filter:brightness(1.25)}
+  button.dirty{border-color:var(--warn);color:var(--warn)}
   button.primary{background:var(--accent);color:#0a0a0a;font-weight:600}
   .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0}
   .hint{color:var(--muted);font-size:13px;line-height:1.6}
@@ -133,6 +137,7 @@ Estiramientos 3 min</textarea>
       <button class="icon seq" data-act="next" aria-label="Siguiente" title="Siguiente">⏭</button>
       <button data-act="focus" title="Modo entrenamiento a pantalla completa">⛶ Entrenamiento</button>
       <button id="resetAll">↺ Reiniciar</button>
+      <button class="icon" data-act="mute" aria-label="Silenciar" title="Silenciar voz y pitidos">🔊</button>
     </div>
   </div>
 
@@ -150,6 +155,7 @@ Estiramientos 3 min</textarea>
     <button data-act="prev">⏮ Anterior</button>
     <button data-act="pause">⏸ Pausar todo</button>
     <button data-act="next">Siguiente ⏭</button>
+    <button class="icon" data-act="mute" aria-label="Silenciar" title="Silenciar voz y pitidos">🔊</button>
     <button data-act="exit">Salir</button>
   </div>
 </div>
@@ -276,13 +282,17 @@ function spoken(sec) {
   ].filter(Boolean).join(' y ');
 }
 
-function announce(t) {
-  if (!window.speechSynthesis) return;
+let muted = false;
+try { muted = localStorage.getItem('muted') === '1'; } catch (_) {}
+
+function say(text) {
+  if (muted || !window.speechSynthesis) return;
   speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(`${t.name}, ${spoken(t.total / 1000)}`);
+  const u = new SpeechSynthesisUtterance(text);
   u.lang = 'es-ES';
   speechSynthesis.speak(u);
 }
+const announce = t => say(`${t.name}, ${spoken(t.total / 1000)}`);
 
 let wakeLock = null;
 async function keepAwake(on) {
@@ -308,7 +318,7 @@ function unlockAudio() {
   } catch (_) {}
 }
 function tone(freq, len, at = 0) {
-  if (!audioCtx) return;
+  if (muted || !audioCtx) return;
   const o = audioCtx.createOscillator();
   const g = audioCtx.createGain();
   o.frequency.value = freq;
@@ -319,7 +329,7 @@ function tone(freq, len, at = 0) {
   o.stop(audioCtx.currentTime + at + len);
 }
 function beep() {
-  navigator.vibrate?.([200, 100, 200]);
+  if (!muted) navigator.vibrate?.([200, 100, 200]);
   [0, 0.4, 0.8].forEach(d => tone(880, 0.2, d));
 }
 
@@ -336,7 +346,7 @@ function start(t) {
   t.lastTick = null;
   t.el.classList.remove('done');
   const fresh = t.remaining === t.total;
-  if (fresh) announce(t);
+  if (fresh) { t.saidHalf = t.said10 = false; announce(t); }
   // Los ejercicios (no los descansos) empiezan con 3 s de preparación
   if (fresh && t.type === 'work') { t.prepEndAt = Date.now() + PREP_MS; return; }
   t.endAt = Date.now() + t.remaining;
@@ -400,6 +410,11 @@ setInterval(() => {
     }
     if (t.endAt) {
       t.remaining = Math.max(0, t.endAt - now);
+      // Avisos de voz en actividades de 30 s o más (en las cortas se pisarían con el anuncio)
+      if (t.total >= 30000) {
+        if (!t.saidHalf && t.remaining <= t.total / 2) { t.saidHalf = true; say('Mitad'); }
+        if (!t.said10 && t.remaining <= 10000) { t.said10 = true; say('Quedan 10 segundos'); }
+      }
       if (t.remaining === 0) {
         t.endAt = null;
         onFinish(t);
@@ -437,6 +452,7 @@ function renderControls() {
     b.textContent = running || !seqActive ? '⏸ Pausar' : '▶ Reanudar';
   });
   $player.classList.toggle('running', seqActive);
+  document.querySelectorAll('[data-act=mute]').forEach(b => { b.textContent = muted ? '🔇' : '🔊'; });
   $resetAll.textContent = seqActive ? '■ Detener' : '↺ Reiniciar';
 
   $remaining.textContent = seqActive
@@ -606,6 +622,21 @@ function shareUrl() {
 const STORE = 'rutinas'; // { nombre: { r: texto, d: descanso entre vueltas } }
 const $saved = document.getElementById('saved');
 let removeArmed = null; // borrar pide un segundo clic (sin confirm(), que el navegador puede bloquear)
+let loaded = '';        // rutina seleccionada en el desplegable
+let baseline = '';      // estado del editor la última vez que se guardó o cargó
+const snapshot = () => `${roundRest()}\n${$input.value}`;
+const isDirty = () => snapshot() !== baseline;
+const $save = document.querySelector('[data-act=save]');
+function renderDirty() {
+  const dirty = isDirty();
+  $save.classList.toggle('dirty', dirty);
+  $save.textContent = dirty ? '💾 Guardar •' : '💾 Guardar';
+  $save.title = dirty ? 'Hay cambios sin guardar' : '';
+}
+function markClean() { baseline = snapshot(); renderDirty(); }
+$input.addEventListener('input', renderDirty);
+$roundRest.addEventListener('input', renderDirty);
+addEventListener('beforeunload', e => { if (isDirty()) e.preventDefault(); });
 function loadSaved() {
   try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch (_) { return {}; }
 }
@@ -616,13 +647,20 @@ function renderSaved(selected = $saved.value) {
   const names = Object.keys(loadSaved()).sort((a, b) => a.localeCompare(b));
   $saved.replaceChildren(new Option('— Rutinas guardadas —', ''), ...names.map(n => new Option(n, n)));
   $saved.value = names.includes(selected) ? selected : '';
+  loaded = $saved.value;
 }
 $saved.addEventListener('change', () => {
   const rt = loadSaved()[$saved.value];
+  if (rt && isDirty() && !confirm('Hay cambios sin guardar en la rutina actual. ¿Descartarlos?')) {
+    $saved.value = loaded;
+    return;
+  }
+  loaded = $saved.value;
   if (!rt) return;
   $input.value = rt.r;
   $roundRest.value = rt.d || 0;
   generate();
+  markClean();
 });
 
 const actions = {
@@ -634,6 +672,7 @@ const actions = {
     all[name] = { r: $input.value, d: roundRest() };
     if (!storeSaved(all)) return setStatus('No se ha podido guardar (almacenamiento del navegador no disponible).');
     renderSaved(name);
+    markClean();
     setStatus(`💾 Rutina «${name}» ${existed ? 'actualizada' : 'guardada'}.`);
   },
   remove: () => {
@@ -649,10 +688,16 @@ const actions = {
     delete all[name];
     storeSaved(all);
     renderSaved('');
+    markClean();
     setStatus(`Rutina «${name}» borrada.`);
   },
   prev: () => goTo(seqIndex - 1),
   next: () => goTo(seqIndex + 1),
+  mute: () => {
+    muted = !muted;
+    try { localStorage.setItem('muted', muted ? '1' : '0'); } catch (_) {}
+    if (muted) window.speechSynthesis?.cancel();
+  },
   pause: () => {
     const running = timers.filter(t => t.endAt || t.prepEndAt);
     if (running.length) running.forEach(pause);
@@ -704,6 +749,7 @@ $file.addEventListener('change', async () => {
   if (!f) return;
   $input.value = await f.text();
   generate();
+  markClean();
 });
 
 document.getElementById('generate').onclick = generate;
@@ -722,6 +768,12 @@ if (shared.has('r')) {
 
 renderSaved('');
 generate();
+markClean();
+
+// Funciona sin conexión una vez visitada (solo en http/https, no en file://)
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
 </script>
 </body>
 </html>
