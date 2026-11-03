@@ -1,0 +1,659 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Generador de cronómetros</title>
+<style>
+  :root{--bg:#0f1115;--card:#181b22;--line:#2a2f3a;--text:#e8eaf0;--muted:#8a90a0;--accent:#4ade80;--warn:#facc15;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);padding:24px 16px;}
+  main{max-width:960px;margin:0 auto}
+  h1{font-size:1.6rem;margin:0 0 12px}
+  code{background:var(--line);padding:1px 6px;border-radius:4px;font-size:12px}
+  .editor{position:relative;background:var(--card);border:1px solid var(--line);border-radius:10px}
+  .editor textarea,.editor .hl{margin:0;padding:12px;font:14px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;overflow-wrap:break-word;overflow-y:scroll}
+  .editor .hl{position:absolute;inset:0;color:transparent;pointer-events:none}
+  .hl mark{background:rgba(250,204,21,.28);color:transparent;border-radius:3px}
+  textarea{position:relative;display:block;width:100%;min-height:200px;background:transparent;color:var(--text);border:0;border-radius:10px;resize:vertical}
+  input[type=number]{width:64px;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 6px}
+  button{background:var(--line);color:var(--text);border:0;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:14px}
+  button:hover{filter:brightness(1.25)}
+  button.primary{background:var(--accent);color:#0a0a0a;font-weight:600}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0}
+  .hint{color:var(--muted);font-size:13px;line-height:1.6}
+  .errors{color:var(--warn);font-size:13px;margin-top:8px;min-height:1em}
+  .status{color:var(--muted);font-size:14px;margin-top:8px;min-height:1em}
+  .remaining{font-variant-numeric:tabular-nums;color:var(--text);font-weight:600}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-top:16px}
+  .timer{background:var(--card);border:2px solid transparent;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px;transition:border-color .2s,opacity .2s}
+  .timer.active{border-color:var(--accent)}
+  .timer.rest{background:#121a26}
+  .timer.rest .name{color:#7dd3fc}
+  .timer.rest.active{border-color:#38bdf8}
+  .next{color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:6px;min-height:1.2em}
+  .timer.done{opacity:.4}
+  .name{font-weight:600;font-size:15px;word-break:break-word}
+  .sub{color:var(--muted);font-size:12px}
+  .time{font-size:42px;font-variant-numeric:tabular-nums;font-weight:700;line-height:1.1}
+  .bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden}
+  .bar>div{height:100%;background:var(--accent);width:0}
+  .btns{display:flex;gap:6px}
+  .btns button{flex:1}
+  .group{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  button.ghost{background:transparent;border:1px solid var(--line);padding:6px 10px;font-size:13px}
+  button.icon{min-width:44px;padding:8px 10px}
+  .toolbar{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px}
+  .toolbar h2{font-size:13px;margin:0;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+  .compose{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 0}
+  .player{position:sticky;top:8px;z-index:5;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:16px;padding:10px 12px;background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.4)}
+  .player .info{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .player .status{margin:0}
+  .player:not(.running) .seq,.player.running .idle{display:none}
+  .section h2{font-size:1rem;margin:24px 0 0;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+  #focus{position:fixed;inset:0;z-index:10;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px 16px;text-align:center}
+  #focus[hidden]{display:none}
+  #focus .f-name{font-size:clamp(24px,6vw,48px);font-weight:700;word-break:break-word}
+  #focus.rest .f-name{color:#7dd3fc}
+  #focus .f-time{font-size:clamp(72px,24vw,220px);font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+  #focus .bar{width:min(600px,100%);height:10px}
+  #focus.rest .bar>div{background:#38bdf8}
+  #focus .f-next{color:var(--muted);font-size:18px}
+  #focus .row{justify-content:center}
+</style>
+</head>
+<body>
+<main>
+  <h1>⏱️ Generador de cronómetros</h1>
+  <p class="hint">
+    Pega tu rutina, una actividad por línea. Formatos admitidos:<br>
+    <code>Sentadillas 40s</code> · <code>Plancha 1:30</code> · <code>Correr 5 min</code> · <code>Descanso 2 min 30 s</code><br>
+    Repetir una actividad seguida: <code>3x Sentadillas 30s</code>.<br>
+    Repetir un bloque entero: una línea <code>3x</code> seguida de las actividades del bloque (hasta una línea vacía). El bloque completo se repite 3 veces.
+  </p>
+
+  <div class="toolbar">
+    <h2>Rutina</h2>
+    <div class="group">
+      <button class="ghost" data-act="import">Importar .txt</button>
+      <button class="ghost" data-act="export">Exportar .txt</button>
+      <button class="ghost" data-act="share">🔗 Compartir enlace</button>
+      <input type="file" id="file" accept=".txt,text/plain" hidden>
+    </div>
+  </div>
+
+  <div class="editor">
+    <div class="hl" id="hl" aria-hidden="true"></div>
+    <textarea id="input" spellcheck="false">Calentamiento 3 min
+
+3x
+Sentadillas con pausa, 12 reps 48s
+Descanso 20s
+Puentes de glúteos, 15 reps 75s
+Descanso 20s
+Zancadas hacia atrás, 10 a 12 por pierna 44s
+Descanso 20s
+Flexiones sobre rodillas, 10 reps 30s
+Descanso 20s
+Plancha abdominal 40s
+Descanso 60s
+
+Estiramientos 3 min</textarea>
+  </div>
+  <div id="errors" class="errors"></div>
+
+  <div class="compose">
+    <label class="hint">Descanso entre vueltas <input type="number" id="roundRest" min="0" value="0"> s</label>
+    <button id="generate">Generar cronómetros</button>
+  </div>
+
+  <div class="player" id="player">
+    <div class="info">
+      <span class="remaining" id="remaining"></span>
+      <div id="summary" class="status"></div>
+    </div>
+    <div class="group">
+      <button class="primary idle" id="runAll">▶ Empezar rutina</button>
+      <button class="icon seq" data-act="prev" aria-label="Anterior" title="Anterior">⏮</button>
+      <button class="primary seq" data-act="pause">⏸ Pausar</button>
+      <button class="icon seq" data-act="next" aria-label="Siguiente" title="Siguiente">⏭</button>
+      <button data-act="focus" title="Modo entrenamiento a pantalla completa">⛶ Entrenamiento</button>
+      <button id="resetAll">↺ Reiniciar</button>
+    </div>
+  </div>
+
+  <div id="grid"></div>
+</main>
+
+<div id="focus" hidden>
+  <div class="sub" id="fSub"></div>
+  <div class="f-name" id="fName"></div>
+  <div class="f-time" id="fTime"></div>
+  <div class="bar"><div id="fBar"></div></div>
+  <div class="f-next" id="fNext"></div>
+  <div class="remaining" id="fRem"></div>
+  <div class="row">
+    <button data-act="prev">⏮ Anterior</button>
+    <button data-act="pause">⏸ Pausar todo</button>
+    <button data-act="next">Siguiente ⏭</button>
+    <button data-act="exit">Salir</button>
+  </div>
+</div>
+
+<script>
+/* ---------- Parser ---------- */
+
+const UNIT_SECONDS = u => u.startsWith('h') ? 3600 : u.startsWith('m') ? 60 : 1;
+
+// Admite: 1:30 | 40s | 40 seg | 5 min | 1 hora | 2.5 min ...
+const DURATION_SRC = String.raw`(?:(\d+):(\d{1,2}))|(?:(\d+(?:[.,]\d+)?)\s*(horas?|hrs?|h|minutos?|mins?|min|m|segundos?|segs?|seg|sec|s)\b)`;
+
+function parseRoutine(text, roundRest = 0) {
+  const steps = [];
+  const errors = [];  // { idx, msg }; idx = línea (base 0) para marcarla en el editor
+  let group = null;   // { reps, id, items: [] } mientras se leen las líneas de un bloque
+  let blockId = 0;
+
+  // Emite el bloque completo tantas veces como indique su cabecera
+  const flushGroup = () => {
+    if (!group) return;
+    if (group.items.length) {
+      for (let r = 1; r <= group.reps; r++) {
+        const meta = {
+          round: group.reps > 1 ? `Ronda ${r}/${group.reps}` : '',
+          block: group.reps > 1 ? group.id : null,
+          r,
+          reps: group.reps,
+        };
+        for (const item of group.items) steps.push({ ...item, ...meta });
+        if (roundRest > 0 && r < group.reps) {
+          steps.push({ name: 'Descanso entre vueltas', seconds: roundRest, type: 'rest', ...meta });
+        }
+      }
+    }
+    group = null;
+  };
+
+  text.split(/\r?\n/).forEach((raw, idx) => {
+    const line = raw.trim();
+    if (!line) { flushGroup(); return; }
+
+    // Cabecera de bloque: "3x" o "3x:"
+    const header = line.match(/^(\d+)\s*[x×]\s*:?$/i);
+    if (header) {
+      flushGroup();
+      group = { reps: Number(header[1]), id: ++blockId, items: [] };
+      return;
+    }
+
+    // Repetición de una sola actividad en línea: "3x Sentadillas 30s"
+    const inline = line.match(/^(\d+)\s*[x×]\s+(.+)$/i);
+    const content = inline ? inline[2] : line;
+    const reps = inline ? Number(inline[1]) : 1;
+
+    const re = new RegExp(DURATION_SRC, 'gi');
+    const matches = [...content.matchAll(re)];
+    if (!matches.length) {
+      errors.push({ idx, msg: `Línea ${idx + 1}: no encuentro la duración en «${line}»` });
+      return;
+    }
+
+    let seconds = 0;
+    for (const m of matches) {
+      seconds += m[1] !== undefined
+        ? Number(m[1]) * 60 + Number(m[2])
+        : parseFloat(m[3].replace(',', '.')) * UNIT_SECONDS(m[4].toLowerCase());
+    }
+    if (seconds <= 0) {
+      errors.push({ idx, msg: `Línea ${idx + 1}: la duración debe ser mayor que 0` });
+      return;
+    }
+
+    const name = content
+      .replace(re, ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/^[\s\-–—:,.;|()]+|[\s\-–—:,.;|()]+$/g, '')
+      .trim() || 'Actividad';
+
+    const item = {
+      name,
+      seconds,
+      type: /^descanso\b/i.test(name) ? 'rest' : 'work',
+    };
+
+    // Dentro de un bloque, la línea pasa al bloque; si no, se emite sola
+    if (group && !inline) {
+      group.items.push(item);
+      return;
+    }
+
+    flushGroup();
+    for (let r = 1; r <= reps; r++) {
+      steps.push({ ...item, round: '', block: null, r, reps });
+    }
+  });
+
+  flushGroup();
+  return { steps, errors };
+}
+
+// Autocomprobación del parser (mira la consola)
+console.assert(parseRoutine('2x\nA 10s\n', 5).steps.map(s => s.name).join() === 'A,Descanso entre vueltas,A', 'descanso entre vueltas');
+console.assert(parseRoutine('A 10s\nB').errors[0]?.idx === 1, 'índice de línea con error');
+
+/* ---------- Utilidades ---------- */
+
+const pad = n => String(n).padStart(2, '0');
+function fmt(ms) {
+  const s = Math.ceil(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return h ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
+}
+
+// "1 minuto y 30 segundos" para la voz
+function spoken(sec) {
+  sec = Math.round(sec);
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return [
+    m && `${m} ${m === 1 ? 'minuto' : 'minutos'}`,
+    s && `${s} ${s === 1 ? 'segundo' : 'segundos'}`,
+  ].filter(Boolean).join(' y ');
+}
+
+function announce(t) {
+  if (!window.speechSynthesis) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(`${t.name}, ${spoken(t.total / 1000)}`);
+  u.lang = 'es-ES';
+  speechSynthesis.speak(u);
+}
+
+let wakeLock = null;
+async function keepAwake(on) {
+  try {
+    if (on) {
+      if (!wakeLock || wakeLock.released) wakeLock = await navigator.wakeLock?.request('screen');
+    } else {
+      await wakeLock?.release();
+      wakeLock = null;
+    }
+  } catch (_) {}
+}
+// El navegador suelta el bloqueo al cambiar de pestaña; se recupera al volver
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && seqActive) keepAwake(true);
+});
+
+let audioCtx = null;
+function unlockAudio() {
+  try {
+    audioCtx ||= new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch (_) {}
+}
+function tone(freq, len, at = 0) {
+  if (!audioCtx) return;
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.frequency.value = freq;
+  g.gain.value = 0.2;
+  o.connect(g);
+  g.connect(audioCtx.destination);
+  o.start(audioCtx.currentTime + at);
+  o.stop(audioCtx.currentTime + at + len);
+}
+function beep() {
+  navigator.vibrate?.([200, 100, 200]);
+  [0, 0.4, 0.8].forEach(d => tone(880, 0.2, d));
+}
+
+/* ---------- Estado de los cronómetros ---------- */
+
+const PREP_MS = 3000;
+let timers = [];
+let seqActive = false;
+let seqIndex = 0;
+
+function start(t) {
+  if (t.remaining <= 0) t.remaining = t.total;
+  t.finished = false;
+  t.lastTick = null;
+  t.el.classList.remove('done');
+  const fresh = t.remaining === t.total;
+  if (fresh) announce(t);
+  // Los ejercicios (no los descansos) empiezan con 3 s de preparación
+  if (fresh && t.type === 'work') { t.prepEndAt = Date.now() + PREP_MS; return; }
+  t.endAt = Date.now() + t.remaining;
+}
+function pause(t) {
+  if (t.prepEndAt) { t.prepEndAt = null; return; }
+  if (!t.endAt) return;
+  t.remaining = Math.max(0, t.endAt - Date.now());
+  t.endAt = null;
+}
+function reset(t) {
+  t.endAt = null;
+  t.prepEndAt = null;
+  t.remaining = t.total;
+  t.finished = false;
+  t.el.classList.remove('done');
+}
+
+function startStep(i) {
+  seqIndex = i;
+  const t = timers[i];
+  start(t);
+  t.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  setStatus(`Ahora: ${t.name}`);
+}
+
+function goTo(i) {
+  if (!seqActive || i < 0 || i >= timers.length) return;
+  const cur = timers[seqIndex];
+  reset(cur);
+  if (i > seqIndex) cur.el.classList.add('done');
+  render(cur);
+  startStep(i);
+}
+
+function stopSequence(msg) {
+  seqActive = false;
+  keepAwake(false);
+  setStatus(msg);
+}
+
+function onFinish(t) {
+  t.finished = true;
+  t.el.classList.add('done');
+  beep();
+
+  if (seqActive && timers[seqIndex] === t) {
+    if (seqIndex + 1 < timers.length) startStep(seqIndex + 1);
+    else stopSequence('🎉 ¡Rutina terminada!');
+  }
+}
+
+// Un único bucle para todos los cronómetros (evita drift con Date.now)
+setInterval(() => {
+  const now = Date.now();
+  for (const t of timers) {
+    if (t.prepEndAt && now >= t.prepEndAt) {
+      t.prepEndAt = null;
+      t.endAt = now + t.remaining;
+      t.lastTick = null;
+    }
+    if (t.endAt) {
+      t.remaining = Math.max(0, t.endAt - now);
+      if (t.remaining === 0) {
+        t.endAt = null;
+        onFinish(t);
+      }
+    }
+    // Pitido corto en cada uno de los 3 últimos segundos (de la preparación o de la actividad)
+    const left = t.prepEndAt ? t.prepEndAt - now : t.endAt ? t.remaining : 0;
+    const s = Math.ceil(left / 1000);
+    if (s >= 1 && s <= 3 && s !== t.lastTick) {
+      t.lastTick = s;
+      tone(t.prepEndAt ? 440 : 660, 0.12);
+    }
+    render(t);
+  }
+  renderControls();
+}, 200);
+
+function render(t) {
+  t.timeEl.textContent = t.prepEndAt
+    ? `⏳ ${Math.ceil((t.prepEndAt - Date.now()) / 1000)}`
+    : fmt(t.remaining);
+  t.barEl.style.width = `${(1 - t.remaining / t.total) * 100}%`;
+  t.el.classList.toggle('active', !!(t.endAt || t.prepEndAt));
+  t.btnMain.textContent = t.endAt || t.prepEndAt ? 'Pausar' : (t.remaining < t.total && t.remaining > 0 ? 'Reanudar' : 'Iniciar');
+}
+
+const $remaining = document.getElementById('remaining');
+const $focus = document.getElementById('focus');
+const $player = document.getElementById('player');
+const $resetAll = document.getElementById('resetAll');
+
+function renderControls() {
+  const running = timers.some(t => t.endAt || t.prepEndAt);
+  document.querySelectorAll('[data-act=pause]').forEach(b => {
+    b.textContent = running || !seqActive ? '⏸ Pausar' : '▶ Reanudar';
+  });
+  $player.classList.toggle('running', seqActive);
+  $resetAll.textContent = seqActive ? '■ Detener' : '↺ Reiniciar';
+
+  $remaining.textContent = seqActive
+    ? `Restante: ${fmt(timers.slice(seqIndex).reduce((a, t) => a + t.remaining, 0))}`
+    : '';
+
+  if ($focus.hidden) return;
+  const t = seqActive ? timers[seqIndex] : null;
+  $focus.classList.toggle('rest', t?.type === 'rest');
+  document.getElementById('fName').textContent = t ? t.name : '🎉 ¡Rutina terminada!';
+  document.getElementById('fSub').textContent = t ? t.subEl.textContent : '';
+  document.getElementById('fTime').textContent = t ? t.timeEl.textContent : '';
+  document.getElementById('fBar').style.width = t ? t.barEl.style.width : '100%';
+  document.getElementById('fNext').textContent = t ? t.nextEl.textContent : '';
+  document.getElementById('fRem').textContent = $remaining.textContent;
+}
+
+function createTimer(i, step) {
+  const t = {
+    name: step.name,
+    type: step.type,
+    total: step.seconds * 1000,
+    remaining: step.seconds * 1000,
+    endAt: null,
+    prepEndAt: null,
+    finished: false,
+  };
+
+  const el = document.createElement('div');
+  el.className = step.type === 'rest' ? 'timer rest' : 'timer';
+
+  const name = document.createElement('div');
+  name.className = 'name';
+  name.textContent = `${i + 1}. ${t.name}`;
+
+  const sub = document.createElement('div');
+  sub.className = 'sub';
+  sub.textContent = [
+    step.type === 'rest' ? 'Descanso' : 'Ejercicio',
+    step.round,
+    `duración ${fmt(t.total)}`,
+  ].filter(Boolean).join(' · ');
+
+  const time = document.createElement('div');
+  time.className = 'time';
+
+  const bar = document.createElement('div');
+  bar.className = 'bar';
+  const barFill = document.createElement('div');
+  bar.appendChild(barFill);
+
+  const btns = document.createElement('div');
+  btns.className = 'btns';
+  const btnMain = document.createElement('button');
+  btnMain.onclick = () => {
+    unlockAudio();
+    if (t.endAt || t.prepEndAt) pause(t); else start(t);
+    render(t);
+  };
+  const btnReset = document.createElement('button');
+  btnReset.textContent = 'Reiniciar';
+  btnReset.onclick = () => { reset(t); render(t); };
+  btns.append(btnMain, btnReset);
+
+  const nextEl = document.createElement('div');
+  nextEl.className = 'next';
+
+  el.append(name, sub, time, bar, btns, nextEl);
+
+  Object.assign(t, { el, timeEl: time, barEl: barFill, btnMain, nextEl, subEl: sub });
+  render(t);
+  return t;
+}
+
+function setStatus(msg) {
+  document.getElementById('summary').textContent = msg;
+}
+
+function runSequence() {
+  if (!timers.length) return;
+  unlockAudio();
+  timers.forEach(reset);
+  seqActive = true;
+  keepAwake(true);
+  startStep(0);
+}
+
+/* ---------- UI ---------- */
+
+const $input = document.getElementById('input');
+const $hl = document.getElementById('hl');
+const $grid = document.getElementById('grid');
+const $errors = document.getElementById('errors');
+const $roundRest = document.getElementById('roundRest');
+const $file = document.getElementById('file');
+
+const roundRest = () => Math.max(0, Number($roundRest.value) || 0);
+
+// Validación en vivo: una capa detrás del textarea resalta las líneas que no se entienden
+function validate() {
+  const { errors } = parseRoutine($input.value, roundRest());
+  $errors.textContent = errors.map(e => e.msg).join(' · ');
+  const bad = new Set(errors.map(e => e.idx));
+  $hl.replaceChildren(...$input.value.split('\n').flatMap((line, i) => {
+    let node = document.createTextNode(line);
+    if (bad.has(i)) { node = document.createElement('mark'); node.textContent = line; }
+    return [node, document.createTextNode('\n')];
+  }));
+  $hl.scrollTop = $input.scrollTop;
+}
+$input.addEventListener('input', validate);
+$input.addEventListener('scroll', () => { $hl.scrollTop = $input.scrollTop; });
+
+function generate() {
+  const { steps } = parseRoutine($input.value, roundRest());
+  validate();
+
+  stopSequence('');
+  window.speechSynthesis?.cancel();
+  $grid.innerHTML = '';
+  timers = steps.map((s, i) => createTimer(i, s));
+
+  // Agrupa por vuelta: cada repetición de un bloque tiene su encabezado
+  let section = null;
+  let currentKey = null;
+  timers.forEach((t, i) => {
+    const s = steps[i];
+    const key = s.block !== null ? `bloque-${s.block}-vuelta-${s.r}` : 'suelto';
+    if (key !== currentKey || s.block === null && section === null) {
+      currentKey = key;
+      section = document.createElement('section');
+      section.className = 'section';
+      if (s.block !== null) {
+        const h = document.createElement('h2');
+        h.textContent = `Vuelta ${s.r} de ${s.reps}`;
+        section.appendChild(h);
+      }
+      const grid = document.createElement('div');
+      grid.className = 'grid';
+      section.appendChild(grid);
+      $grid.appendChild(section);
+    }
+    section.querySelector('.grid').appendChild(t.el);
+  });
+
+  timers.forEach((t, i) => {
+    t.nextEl.textContent = i + 1 < timers.length
+      ? `Siguiente: ${timers[i + 1].name}`
+      : 'Última actividad';
+  });
+
+  if (steps.length) {
+    const total = steps.reduce((a, s) => a + s.seconds, 0) * 1000;
+    setStatus(`${steps.length} cronómetros · duración total ${fmt(total)}`);
+  } else {
+    setStatus('No se han encontrado pasos válidos.');
+  }
+}
+
+function shareUrl() {
+  const params = new URLSearchParams({ r: $input.value, d: roundRest() });
+  return `${location.href.split('#')[0]}#${params}`;
+}
+
+const actions = {
+  prev: () => goTo(seqIndex - 1),
+  next: () => goTo(seqIndex + 1),
+  pause: () => {
+    const running = timers.filter(t => t.endAt || t.prepEndAt);
+    if (running.length) running.forEach(pause);
+    else if (seqActive) start(timers[seqIndex]);
+  },
+  focus: () => {
+    if (!seqActive) runSequence();
+    $focus.hidden = false;
+    document.documentElement.requestFullscreen?.().catch(() => {});
+  },
+  exit: () => {
+    $focus.hidden = true;
+    if (document.fullscreenElement) document.exitFullscreen();
+  },
+  export: () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([$input.value], { type: 'text/plain' }));
+    a.download = 'rutina.txt';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  },
+  import: () => $file.click(),
+  share: () => {
+    const url = shareUrl();
+    history.replaceState(null, '', url);
+    navigator.clipboard?.writeText(url).then(
+      () => setStatus('🔗 Enlace copiado al portapapeles.'),
+      () => setStatus(`Copia este enlace: ${url}`),
+    ) ?? setStatus(`Copia este enlace: ${url}`);
+  },
+};
+
+document.addEventListener('click', e => {
+  const act = e.target.closest('[data-act]')?.dataset.act;
+  if (!act) return;
+  unlockAudio();
+  actions[act]();
+  timers.forEach(render);
+  renderControls();
+});
+
+$file.addEventListener('change', async () => {
+  const f = $file.files[0];
+  $file.value = '';
+  if (!f) return;
+  $input.value = await f.text();
+  generate();
+});
+
+document.getElementById('generate').onclick = generate;
+document.getElementById('runAll').onclick = runSequence;
+document.getElementById('resetAll').onclick = () => {
+  timers.forEach(t => { reset(t); render(t); });
+  stopSequence('Cronómetros reiniciados.');
+};
+
+// Rutina compartida por enlace: #r=<texto>&d=<descanso entre vueltas>
+const shared = new URLSearchParams(location.hash.slice(1));
+if (shared.has('r')) {
+  $input.value = shared.get('r');
+  $roundRest.value = shared.get('d') || 0;
+}
+
+generate();
+</script>
+</body>
+</html>
